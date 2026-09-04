@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Attraction Profile Estimator &amp; Training Program</title>
+<meta name="description" content="A research-based attraction profile estimator and a phase-by-phase training program, grounded in mate-preference and relationship science." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #12161F; }
+  * { box-sizing: border-box; }
+  #root { min-height: 100vh; }
+  input[type="range"] { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px; background: #2A3244; outline: none; }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #B23A32; cursor: pointer; }
+  input[type="range"]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: #B23A32; cursor: pointer; border: none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo } = React;
+
+
+// ---- Design tokens ----
+const C = {
+  ink: "#12161F",
+  inkSoft: "#1A2030",
+  inkSofter: "#212940",
+  paper: "#ECE7D8",
+  paperDim: "#B9B29B",
+  rust: "#B23A32",
+  gold: "#C9A227",
+  teal: "#4F7C82",
+  line: "#2A3244",
+};
+
+const serif = "'Source Serif 4', Georgia, serif";
+const mono = "ui-monospace, 'SF Mono', monospace";
+
+function clamp(n, lo, hi) {
+  return Math.max(lo, Math.min(hi, n));
+}
+function cmToFtIn(cm) {
+  const totalInches = cm / 2.54;
+  const feet = Math.floor(totalInches / 12);
+  const inches = Math.round(totalInches - feet * 12);
+  if (inches === 12) return { feet: feet + 1, inches: 0 };
+  return { feet, inches };
+}
+function ftInToCm(feet, inches) {
+  return (feet * 12 + inches) * 2.54;
+}
+function heightScore(cm) {
+  if (!cm) return 5;
+  const diff = cm - 175;
+  return clamp(5 + diff / 4.5, 1, 10);
+}
+
+// ---------------- Calculator data (from prior build) ----------------
+const SLIDER_INITIAL = [
+  { key: "confidence", label: "Social confidence (calibrated, not aggressive)", anchor: "1 = freeze up · 10 = at ease initiating" },
+  { key: "fitness", label: "Physical fitness / conditioning", anchor: "1 = sedentary · 10 = visibly fit, trains consistently" },
+  { key: "grooming", label: "Grooming & style presentation", anchor: "1 = no attention · 10 = dialed-in, intentional" },
+  { key: "humor", label: "Humor / conversational charisma", anchor: "1 = flat · 10 = quick, playful, easy energy" },
+  { key: "voice", label: "Vocal presence (tone, clarity, pace)", anchor: "1 = mumbled, rushed · 10 = clear, grounded" },
+];
+const SLIDER_LONGTERM = [
+  { key: "trust", label: "Trustworthiness / emotional stability", anchor: "1 = volatile · 10 = steady under stress" },
+  { key: "warmth", label: "Warmth / kindness toward others", anchor: "1 = self-centered · 10 = generous, kind by default" },
+  { key: "communication", label: "Communication & emotional intelligence", anchor: "1 = avoids hard talks · 10 = direct, repairs conflict well" },
+  { key: "ambition", label: "Ambition / clarity of direction", anchor: "1 = no direction · 10 = visibly building toward something" },
+];
+const SELECTS = [
+  { key: "trajectory", label: "Career / income trajectory", options: [
+    { v: 2, t: "Declining or unstable" }, { v: 5, t: "Stable, flat" }, { v: 7, t: "Growing steadily" }, { v: 9, t: "High growth" },
+  ]},
+  { key: "education", label: "Education level", options: [
+    { v: 4, t: "High school" }, { v: 6, t: "Some college / trade cert." }, { v: 8, t: "Bachelor's degree" }, { v: 9, t: "Graduate / professional degree" },
+  ]},
+];
+const W_INIT = { confidence: 0.25, fitness: 0.18, height: 0.15, humor: 0.15, grooming: 0.12, voice: 0.08, trajectorySignal: 0.07 };
+const W_LONG = { trust: 0.22, warmth: 0.2, trajectory: 0.18, communication: 0.16, confidence: 0.1, education: 0.08, fitness: 0.06 };
+
+function Gauge({ value, label, color, sub }) {
+  const pct = clamp(value, 0, 10) / 10;
+  const circ = 2 * Math.PI * 50;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+      <svg width="128" height="128" viewBox="0 0 128 128">
+        <circle cx="64" cy="64" r="50" fill="none" stroke={C.line} strokeWidth="9" />
+        <circle cx="64" cy="64" r="50" fill="none" stroke={color} strokeWidth="9"
+          strokeDasharray={circ} strokeDashoffset={circ * (1 - pct)} strokeLinecap="round"
+          transform="rotate(-90 64 64)" style={{ transition: "stroke-dashoffset 0.5s ease" }} />
+        <text x="64" y="60" textAnchor="middle" fontSize="27" fontFamily={serif} fill={C.paper}>{value.toFixed(1)}</text>
+        <text x="64" y="79" textAnchor="middle" fontSize="9" fill={C.paperDim}>/ 10</text>
+      </svg>
+      <div style={{ fontFamily: serif, fontSize: 14.5, color: C.paper, textAlign: "center" }}>{label}</div>
+      <div style={{ fontSize: 10.5, color: C.paperDim, textAlign: "center", maxWidth: 150 }}>{sub}</div>
+    </div>
+  );
+}
+
+function Slider({ trait, value, onChange }) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+        <label style={{ fontSize: 13.5, color: C.paper, fontFamily: serif }}>{trait.label}</label>
+        <span style={{ fontFamily: mono, fontSize: 12.5, color: C.gold }}>{value}</span>
+      </div>
+      <input type="range" min="1" max="10" value={value} onChange={(e) => onChange(Number(e.target.value))}
+        style={{ width: "100%", accentColor: C.rust }} />
+      <div style={{ fontSize: 10, color: C.paperDim, marginTop: 2, fontStyle: "italic" }}>{trait.anchor}</div>
+    </div>
+  );
+}
+
+function Calculator() {
+  const [unit, setUnit] = useState("imperial");
+  const [heightCm, setHeightCm] = useState(178);
+  const [v, setV] = useState({ confidence: 5, fitness: 5, grooming: 5, humor: 5, voice: 5, trust: 5, warmth: 5, communication: 5, ambition: 5, trajectory: 5, education: 8 });
+  const upd = (k, val) => setV((s) => ({ ...s, [k]: val }));
+  const h = heightScore(heightCm);
+
+  const init = useMemo(() => clamp(
+    v.confidence * W_INIT.confidence + v.fitness * W_INIT.fitness + h * W_INIT.height +
+    v.humor * W_INIT.humor + v.grooming * W_INIT.grooming + v.voice * W_INIT.voice +
+    v.trajectory * W_INIT.trajectorySignal, 1, 10), [v, h]);
+
+  const long = useMemo(() => clamp(
+    v.trust * W_LONG.trust + v.warmth * W_LONG.warmth + v.trajectory * W_LONG.trajectory +
+    v.communication * W_LONG.communication + v.confidence * W_LONG.confidence +
+    v.education * W_LONG.education + v.fitness * W_LONG.fitness, 1, 10), [v]);
+
+  const overall = init * 0.45 + long * 0.55;
+
+  const gaps = [
+    { label: "Social confidence", val: v.confidence, w: 0.17 },
+    { label: "Warmth / kindness", val: v.warmth, w: 0.2 },
+    { label: "Trustworthiness / stability", val: v.trust, w: 0.22 },
+    { label: "Communication", val: v.communication, w: 0.16 },
+    { label: "Career trajectory", val: v.trajectory, w: 0.12 },
+    { label: "Fitness", val: v.fitness, w: 0.12 },
+    { label: "Grooming / style", val: v.grooming, w: 0.12 },
+    { label: "Humor / charisma", val: v.humor, w: 0.15 },
+  ].map((c) => ({ ...c, gap: (10 - c.val) * c.w })).sort((a, b) => b.gap - a.gap).slice(0, 3);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "center", gap: 24, flexWrap: "wrap", marginBottom: 28, padding: "20px 0", background: C.inkSoft, borderRadius: 10, border: `1px solid ${C.line}` }}>
+        <Gauge value={init} label="Initial Spark" color={C.rust} sub="Confidence, presentation, humor, physicality" />
+        <Gauge value={long} label="Long-Term Partner" color={C.gold} sub="Trust, warmth, trajectory, communication" />
+        <Gauge value={overall} label="Blended" color={C.teal} sub="45% initial / 55% long-term" />
+      </div>
+
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+          <label style={{ fontSize: 13.5, color: C.paper, fontFamily: serif }}>Height</label>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontFamily: mono, fontSize: 12.5, color: C.gold }}>
+              {unit === "imperial" ? `${cmToFtIn(heightCm).feet}'${cmToFtIn(heightCm).inches}"` : `${Math.round(heightCm)} cm`}
+            </span>
+            <button onClick={() => setUnit((u) => (u === "imperial" ? "metric" : "imperial"))}
+              style={{ background: "none", border: `1px solid ${C.line}`, color: C.paperDim, fontSize: 10, padding: "3px 7px", borderRadius: 4, cursor: "pointer" }}>
+              {unit === "imperial" ? "use cm" : "use ft/in"}
+            </button>
+          </div>
+        </div>
+        {unit === "imperial" ? (
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: C.paperDim, marginBottom: 2 }}>Feet</div>
+              <input type="range" min="4" max="6" value={cmToFtIn(heightCm).feet}
+                onChange={(e) => setHeightCm(clamp(ftInToCm(Number(e.target.value), cmToFtIn(heightCm).inches), 155, 205))}
+                style={{ width: "100%", accentColor: C.rust }} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 10, color: C.paperDim, marginBottom: 2 }}>Inches</div>
+              <input type="range" min="0" max="11" value={cmToFtIn(heightCm).inches}
+                onChange={(e) => setHeightCm(clamp(ftInToCm(cmToFtIn(heightCm).feet, Number(e.target.value)), 155, 205))}
+                style={{ width: "100%", accentColor: C.rust }} />
+            </div>
+          </div>
+        ) : (
+          <input type="range" min="155" max="205" value={Math.round(heightCm)} onChange={(e) => setHeightCm(Number(e.target.value))}
+            style={{ width: "100%", accentColor: C.rust }} />
+        )}
+        <div style={{ fontSize: 10, color: C.paperDim, marginTop: 4, fontStyle: "italic" }}>Relative to ~5'9" (175cm) population average.</div>
+      </div>
+
+      {SELECTS.map((f) => (
+        <div key={f.key} style={{ marginBottom: 16 }}>
+          <label style={{ fontSize: 13.5, color: C.paper, fontFamily: serif, display: "block", marginBottom: 6 }}>{f.label}</label>
+          <select value={v[f.key]} onChange={(e) => upd(f.key, Number(e.target.value))}
+            style={{ width: "100%", padding: "8px 10px", background: C.inkSoft, color: C.paper, border: `1px solid ${C.line}`, borderRadius: 6, fontSize: 13.5 }}>
+            {f.options.map((o) => <option key={o.v} value={o.v}>{o.t}</option>)}
+          </select>
+        </div>
+      ))}
+
+      <div style={{ margin: "20px 0 8px", fontFamily: serif, fontSize: 15, color: C.paper }}>Initial attraction traits</div>
+      {SLIDER_INITIAL.map((t) => <Slider key={t.key} trait={t} value={v[t.key]} onChange={(val) => upd(t.key, val)} />)}
+
+      <div style={{ margin: "20px 0 8px", fontFamily: serif, fontSize: 15, color: C.paper }}>Long-term partner traits</div>
+      {SLIDER_LONGTERM.map((t) => <Slider key={t.key} trait={t} value={v[t.key]} onChange={(val) => upd(t.key, val)} />)}
+
+      <div style={{ marginTop: 24, background: C.inkSoft, border: `1px solid ${C.line}`, borderRadius: 10, padding: 18 }}>
+        <div style={{ fontFamily: serif, fontSize: 15.5, color: C.paper, marginBottom: 10 }}>Where effort moves the score most</div>
+        {gaps.map((g, i) => (
+          <div key={g.label} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <div style={{ width: 20, height: 20, borderRadius: "50%", background: C.rust, color: C.paper, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontFamily: mono, flexShrink: 0 }}>{i + 1}</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ color: C.paper, fontSize: 13 }}>{g.label}</div>
+              <div style={{ height: 5, background: C.line, borderRadius: 3, marginTop: 3 }}>
+                <div style={{ height: 5, width: `${(g.val / 10) * 100}%`, background: C.gold, borderRadius: 3 }} />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------- Training program data ----------------
+const NON_NEGOTIABLES = [
+  "Disinterest — verbal or nonverbal — ends the interaction immediately. No exceptions, no \"one more try.\"",
+  "Every technique here works only inside a mutually enjoyable interaction. None of it is designed to create attraction from nothing or override someone's actual signals — the research it's built on doesn't support that, and misapplying it that way isn't just wrong, it's the fastest way to become exactly the man this program is trying to help you stop being.",
+  "The goal is to become someone worth being attracted to — not to find workarounds for skipping that part.",
+];
+
+const PHASES = [
+  {
+    n: "0", title: "Foundation", tag: "Runs alongside everything else",
+    principle: "Confidence that shows up in a 30-second interaction is downstream of things built in private. You don't need to finish this phase before starting the next one — run it in parallel.",
+    points: [
+      "Strength training 3x/week minimum — changes posture, voice, and how you occupy space before you say a word.",
+      "One honest presentation audit: grooming, haircut, how clothes actually fit. Get an outside opinion; you have blind spots here by definition.",
+      "A one-sentence, un-hedged answer to \"what am I building toward.\" Ambition without a story attached reads as busyness, not ambition.",
+    ],
+    fail: "Treating this as a prerequisite you must \"finish\" before talking to anyone.",
+    metric: "You can describe your direction in one sentence without qualifying it.",
+  },
+  {
+    n: "1", title: "Calibrated Social Confidence", tag: "Prestige, not dominance",
+    principle: "Research draws a hard line between dominance (controlling, aggressive) and prestige (assertive, warm, earned respect). Dominance reads as threat. Prestige — confidence plus warmth — is what tests as attractive. Most bad \"confidence advice\" pushes toward dominance by accident.",
+    points: [
+      "State opinions instead of hedging them, while staying genuinely curious about the other person's.",
+      "Hold silence without anxiously filling it.",
+      "Stay unreactive to disinterest — a flat response shouldn't spike your voice or effort.",
+      "Confidence is trainable: men coached on social confidence were rated higher in status and short-term desirability by real conversation partners in controlled studies — but it was specifically perceived confidence, not aggression or bravado, that predicted the effect.",
+    ],
+    fail: "Confusing volume/intensity for confidence. Loud, fast, and eager is anxiety wearing confidence's clothes.",
+    metric: "You can sit in silence with a stranger for 3+ seconds without needing to fill it.",
+  },
+  {
+    n: "1.5", title: "Body Language & Nonverbal Presence", tag: "New — most of the signal is silent",
+    principle: "Most of what reads as \"confidence\" is decoded before you say a word — posture, stillness, eye contact, and how you occupy space.",
+    points: [
+      "Open posture — uncrossed arms, relaxed shoulders — reads as approachable; closed posture reads as guarded even when you don't feel guarded.",
+      "Stillness beats fidgeting. Leg bouncing, hand-wringing, and phone-checking broadcast anxiety louder than any words can reassure.",
+      "Sustained (not staring) eye contact during conversation signals confidence; breaking it when she's talking reads as disinterest or nerves.",
+      "Escalate touch, if at all, lightly and briefly — a hand on the shoulder, then immediately read the response. Any hesitation means stop; comfort has to be established, never pushed through.",
+    ],
+    fail: "Overcorrecting into stiff, performative \"power posing\" — reads as try-hard, which is its own tell.",
+    metric: "A friend watching you on video says you look at ease, not like you're trying.",
+  },
+  {
+    n: "1.75", title: "What Warmth Actually Looks Like", tag: "New — the vaguest word, made concrete",
+    principle: "Warmth is one of the two dimensions humans use to judge every person, almost instantly — the Stereotype Content Model (Fiske et al.) shows people are read on warmth (is this person's intent toward me good?) and competence (can they act on it?) within seconds, and that first warmth read colors how everything else you do gets interpreted. The exact same joke lands as playful from someone read as warm and as mean from someone read as cold. Warmth isn't a personality type some people just have — it's a specific, repeatable set of behaviors.",
+    points: [
+      "A genuine (Duchenne) smile — eyes engage, not just the mouth. People reliably sense the difference between a real and performed smile.",
+      "Orienting your body and attention toward whoever is speaking, instead of scanning the room over their shoulder.",
+      "Referencing something she said earlier in the conversation. Remembering a detail is one of the cheapest, strongest warmth signals available — most people don't bother.",
+      "How you treat a waiter, bartender, or a friend who walks by. This is watched and weighted more heavily than anything said directly to her, precisely because it can't be performed just for her benefit.",
+      "Asking about her without an attached ulterior motive — a question you'd still ask if nothing romantic could come of it.",
+      "Physical cues: leaning in slightly, relaxed uncrossed arms, open palms, not putting your phone or a drink between you as a barrier.",
+      "Vocal cues: softer volume up close, unhurried pace, genuine laughter rather than a performed \"ha.\"",
+      "Follow-through — doing the small thing you said you'd do. Cheap to promise; only actually warm if delivered.",
+    ],
+    contrast: {
+      situation: "Same moment, two responses",
+      her: "Sorry, I'm a little scattered today, work was rough.",
+      cold: "Oh. Well, I had a rough day too, actually—",
+      warm: "That's rough — want to just not think about work for a minute, or do you need to vent about it?",
+    },
+    fail: "Performing warmth only toward her while being dismissive or curt with waitstaff or friends. This reads as strategic, not genuine — and it's exactly the kind of off-duty behavior the warmth research says people weight most heavily as the real signal of intent.",
+    metric: "From your last few conversations, name one specific detail you remembered and brought back up unprompted. If you can't, you were performing presence, not warmth.",
+  },
+  {
+    n: "2", title: "Cold Approach & Initial Attraction", tag: "10% words, 90% delivery",
+    principle: "Initial-spark research points to confidence, warmth, humor, and presentation mattering far more than what you actually say.",
+    points: [
+      "Open with something observational and real — obviously genuine beats any memorized line.",
+      "Comment before you ask. Rapid-fire questions read as nervous energy management, not interest.",
+      "Light, playful teasing — never insulting — signals you're not seeking approval, which is what makes it attractive.",
+      "Exit while it's still good. Get the contact and leave rather than running the conversation into the ground.",
+    ],
+    fail: "Pre-qualifying yourself — mentioning job, car, achievements in the first 60 seconds. Reads as needing her approval.",
+    metric: "10 cold approaches in a week without your physiology visibly spiking by approach 5.",
+  },
+  {
+    n: "2.1", title: "Humor: Which Styles Actually Work", tag: "New — ranked by research",
+    principle: "Humor research (Martin et al.'s Humor Styles Questionnaire) splits humor into four functional styles — two consistently linked to better relationships and well-being, two consistently linked to worse. Which style you default to matters more than how funny any single joke is.",
+    points: [
+      "This ranking is for typical use, not a hard rule — context, delivery, and how well you already know someone all shift where a given joke lands.",
+    ],
+    ranked: [
+      { rank: 1, label: "Affiliative humor — bonding, inclusive, lighthearted", body: "The safest and strongest style in every context. It's one of two styles the research classifies as benign, and it's the one most consistently linked to relationship satisfaction and well-being, because its entire function is building connection rather than scoring at anyone's expense.", example: "playful riffing on a shared moment, witty observations that include her rather than target her" },
+      { rank: 2, label: "Self-enhancing humor — finding the absurd side of your own life, without self-pity", body: "The other benign style. Signals emotional stability and resilience — someone who can laugh at a bad day without spiraling reads as secure, which ties directly into the long-term trustworthiness traits from Phase 4.5." , example: "\"My flight got cancelled and I spent four hours becoming best friends with a vending machine\"" },
+      { rank: 3, label: "Self-deprecating humor — sparing, and only once you're reading as high-status", body: "Genuinely conditional, per a controlled study (Greengross & Miller, 2008): self-deprecating jokes increased long-term attractiveness specifically for presenters already read as high-status, but decreased it for presenters read as low-status — and had no effect on short-term attraction either way, so it's a slow-burn tool, not an opener. The logic: joking about a flaw only signals confidence if the flaw obviously isn't threatening your actual position. Keep it to genuinely trivial things (parallel parking, dance moves) — never income, dating history, or social skills — and never make it your dominant mode.", example: "\"I have the upper-body strength of a house cat, but I try.\"" },
+      { rank: 4, label: "Light, affectionate teasing directed at her", body: "Distinct from mocking humor — this is playful and inclusive as long as it stays on low-stakes territory and she's visibly enjoying it. Covered in Phase 2.25 as part of banter; the line is whether it makes the interaction more fun together or scores a point at her expense." },
+      { rank: 5, label: "Aggressive humor — mocking a third party", body: "One of the two \"maladaptive\" styles, consistently linked to worse relationship and well-being outcomes for the person using it. It directly undercuts the warmth signal from Phase 1.75 — if you're funny at someone's expense while she's watching, she's not learning you're funny, she's learning what you'd say about her when she's not in the room. One relevant finding: people who watched a comedian mock a third party showed more anxiety and conformity behavior themselves afterward — mocking humor makes a room more guarded, not more at ease." },
+      { rank: 6, label: "Frequent or heavy self-deprecating humor", body: "The other maladaptive style, and the worst default. Overused, it reads as low self-esteem or fishing for reassurance rather than confidence — the most consistently \"maladaptive\"-coded style across the well-being literature. If most of your jokes are about your own inadequacy, that's worth addressing directly by building the trait, not joking about lacking it." },
+    ],
+    fail: "Defaulting to self-deprecation as your main personality because it feels safer than genuine wit — it reads exactly as insecure as it feels to you while you're doing it.",
+    metric: "Look back at your last few conversations: are most of your jokes inclusive (about the shared moment) or at someone's expense (including your own)?",
+  },
+  {
+    n: "2.25", title: "The Interaction, Line by Line", tag: "New — scripts & real signals",
+    principle: "Sequencing matters as much as content. Leading with your name, running an interview, or over-explaining yourself all telegraph a rehearsed routine rather than a real reaction to a real person — and the research on courtship signaling shows the read happens fast, mostly nonverbally, and in both directions.",
+    points: [
+      "Name comes after a real exchange, not before it. Opening with \"Hi, I'm [name], what's your name?\" reads like a scripted survey — it's the tell of someone executing a routine rather than reacting to something real.",
+      "Sequence: (1) an observational opener → (2) she engages → (3) a short genuine back-and-forth, 30–90 seconds → (4) introduce your name as an aside, usually paired with asking hers: \"I'm [Name], by the way — what's your name?\"",
+      "Exception: very short windows (an elevator, a fast-moving line) where you only get one shot — combine the opener and your name in the same breath since there's no time to build up to it.",
+    ],
+    dialogue: [
+      { speaker: "You", line: "That's a great dog — what breed?", note: "Observational, real, low-pressure to answer." },
+      { speaker: "Her", line: "He's a golden retriever mix." },
+      { speaker: "You", line: "He's got the golden 'I trust literally everyone' energy.", note: "Playful, doesn't require her to laugh, just keeps it light." },
+      { speaker: "Her", line: "(laughs) Yeah, he has zero self-preservation instinct." },
+      { speaker: "You", line: "What's his name?", note: "Comment, then ask — 2–3 more exchanges like this before names come up." },
+      { speaker: "You", line: "I'm Alex, by the way. What's your name?", note: "Name exchange arrives after real rapport, not as the opener." },
+    ],
+    doDont: {
+      do: [
+        "Comment on something real and specific before asking anything.",
+        "Ask a genuine follow-up question you actually want the answer to.",
+        "Tease lightly on something low-stakes (her order, her dog's energy) — never her appearance or a real insecurity.",
+        "Let a short silence sit instead of rushing to fill it.",
+      ],
+      dont: [
+        "\"You're gorgeous\" as an opener — all weight on looks, nothing to respond to, forgettable.",
+        "Back-to-back interview questions (\"Where are you from? What do you do? Siblings?\") — reads as a checklist, not curiosity.",
+        "\"I don't normally do this, but...\" or \"I promise I'm not a creep\" — draws attention to a frame you don't want to invoke.",
+        "Backhanded compliments (\"negs\") — this is dominance-coded, not prestige-coded, per the confidence research from Phase 1. It reads as insecure, not confident.",
+      ],
+    },
+    doDont: {
+      do: [
+        "Comment on something real and specific before asking anything.",
+        "Ask a genuine follow-up question you actually want the answer to.",
+        "Tease lightly on something low-stakes (her order, her dog's energy) — never her appearance or a real insecurity.",
+        "Let a short silence sit instead of rushing to fill it.",
+      ],
+      dont: [
+        "\"You're gorgeous\" as an opener — all weight on looks, nothing to respond to, forgettable.",
+        "Back-to-back interview questions (\"Where are you from? What do you do? Siblings?\") — reads as a checklist, not curiosity.",
+        "\"I don't normally do this, but...\" or \"I promise I'm not a creep\" — draws attention to a frame you don't want to invoke.",
+        "Backhanded compliments (\"negs\") — this is dominance-coded, not prestige-coded, per the confidence research from Phase 1. It reads as insecure, not confident.",
+      ],
+    },
+    topics: {
+      do: [
+        "Something specific and observable right now: an item she's holding or wearing, a pet, what she's ordering, an activity she's doing, something happening in the shared environment.",
+        "Something that invites an easy, low-effort answer — she shouldn't have to think hard to respond.",
+        "A genuine observation about the interaction itself once it's underway (\"you have a really easy laugh\").",
+      ],
+      dont: [
+        "Body parts or explicitly sexualized appearance comments — reduces her to a body immediately and kills trust before it starts.",
+        "Anything implying you were watching or tracking her before this moment (referencing something not currently visible, noting how long she's been standing there) — reads as surveillance and is the fastest way to spike alarm.",
+        "Weight, diet, or anything body-critical — even one dressed up as a compliment.",
+        "Comparisons to other women or an ex — reads badly regardless of intent.",
+        "Heavy or polarizing topics as an opener: religion, politics, tragedy. Fine later once real rapport exists, bad as a cold opener.",
+        "A single overall appearance compliment is fine — but only once, later once there's rapport, never as the opening line or the only thing you comment on.",
+      ],
+    },
+    signals: {
+      interest: [
+        "Sustained eye contact or repeated glances back at you",
+        "Smiling, playing with hair, exposing the neck",
+        "Angling her body toward you, closing physical distance",
+        "Laughing more than the material objectively warrants",
+        "Mirroring your posture or energy",
+        "Asking you questions back — investment, not just politeness",
+      ],
+      disinterest: [
+        "Arms crossed, body angled away",
+        "Short, flat, one-word answers with no elaboration",
+        "Minimal or broken eye contact",
+        "Checking her phone, scanning the room",
+        "Creating physical distance / stepping back",
+        "Never asking anything back",
+      ],
+    },
+    fail: "Reading a single signal in isolation. One flat answer might just mean she's distracted — a cluster of 2–3 disinterest signals together is the reliable stop signal, and it should be respected immediately, per the non-negotiables at the top of this program.",
+    metric: "You can point to which specific signals told you the interaction was going well or should end — not just a vague feeling.",
+  },
+  {
+    n: "2.4", title: "Ending the Interaction: The Close", tag: "New — number vs. social",
+    principle: "Exit while it's still good — don't wait for the conversation to run out of steam on its own. A direct, unapologetic ask beats letting things trail off into ambiguity.",
+    points: [
+      "The close is three parts: a brief genuine statement, a direct ask, a graceful exit — in that order, quickly.",
+      "Don't over-explain why you're leaving. A short reason is enough; over-justifying reads as asking permission.",
+      "After you get the number or handle: don't linger trying to extend it further. A short, warm goodbye and walking away confidently beats staying and letting the energy fade.",
+    ],
+    closing: {
+      title: "Closing scripts",
+      scripts: [
+        { label: "Standard close", line: "I've got to run, but I've really enjoyed talking to you — can I get your number?" },
+        { label: "Lower-pressure variant", line: "This was fun. I'd like to keep talking — what's the best way to reach you?" },
+        { label: "If she seems hesitant", line: "No pressure at all — if you'd rather do Instagram, that works too." },
+      ],
+      note: "Number vs. social media: a phone number is the higher-commitment ask and signals you're serious about following up, since it opens a direct line rather than a public platform. Social media is a lower-friction ask that's easier for her to say yes to, but tends to carry a higher flake rate because it doesn't obligate a real conversation the same way a text thread does. This is experiential consensus from dating-coach practice, not an academic finding — treat it as directional. Default to asking for the number when the interaction has genuinely been good; if it's shorter or lower-intensity, offering social media as the easier yes still gives you a path to convert later.",
+    },
+    fail: "Getting the number or handle, then lingering another five minutes trying to keep the good energy going — it almost always deflates instead. Also: ending with nothing because ambiguity felt smoother. It isn't smoother, it's just a missed ask dressed up as cool.",
+    metric: "You leave within 60 seconds of getting the contact info, while the interaction is still at its high point.",
+  },
+  {
+    n: "2.5", title: "Digital Presence: Profiles & Social Media", tag: "Evidence-graded",
+    principle: "Slot 1 does most of the work; the smiling debate is mostly settled (natural smile + eye contact, not the old \"look away, don't smile\" myth); fill every slot; skip heavy filters.",
+    points: [
+      "Slot order: clear smiling face → full body → an activity → a social/friends photo → dressed-up → a candid moment.",
+      "Video prompts consistently outperform static photos on platform-reported engagement — carries voice and unscripted reaction a photo can't fake.",
+      "Cold-adding on social media: the deciding factor is a reference point, not whether you send the request. A true cold add with zero shared context reads very differently than following up after actually meeting someone.",
+      "Volume kills it — request, then a dozen likes, then a DM within minutes is the single most consistent \"creepy\" complaint pattern across sources.",
+    ],
+    fail: "Using social media to bypass a rejection or non-response elsewhere — it reads as not respecting the first answer.",
+    metric: "Every profile slot is filled with a distinct, real photo — no duplicated angles or contexts.",
+  },
+  {
+    n: "2.75", title: "Texting: Converting Matches to Real Dates", tag: "New",
+    principle: "The point of texting after a match is to get to a date, not to build a relationship over text.",
+    points: [
+      "Aim to propose a specific date and time within your first ~10–15 messages. Long pre-date threads raise flake risk and let the version of you in her head drift from reality.",
+      "Specific beats vague: \"coffee Thursday or Friday?\" converts better than \"we should hang sometime.\"",
+      "Roughly match her effort and message length — a wall of text to a one-line reply reads as overinvested.",
+    ],
+    fail: "The \"text-only relationship\" — enjoying the texting itself becomes the goal and momentum dies before a date happens.",
+    metric: "Track your match-to-date conversion rate, not just how nice the conversations feel.",
+  },
+  {
+    n: "3", title: "Building Real Chemistry", tag: "Short-term traits meet long-term ones",
+    principle: "This is where confidence and presence need to be joined by warmth, trustworthiness, and communication — you're now being evaluated as a pattern, not a moment.",
+    points: [
+      "Genuine curiosity beats performing interestingness — ask what you actually want to know.",
+      "Match her level of openness, don't exceed it by more than one notch. Oversharing on date one reads as unprocessed, not deep.",
+      "Screen for fit yourself — values, conflict style. Focusing only on \"am I attractive enough\" and never \"is this a good match\" ends in relationships that don't last regardless of initial spark.",
+      "Stay consistent between the confident public version of you and the private version — inconsistency erodes trust fast, and trust is one of the highest-weighted long-term traits.",
+    ],
+    fail: "Relaxing the traits that got you here the moment things feel secure — the single most common way attraction fades in the first few months.",
+    metric: "You're asking at least as many real questions as you're answering.",
+  },
+  {
+    n: "3.5", title: "Designing the First Date", tag: "New — arousal and environment",
+    principle: "A well-known finding on misattributed arousal: men who met a woman on a high, wobbly suspension bridge rated her as more attractive and were more likely to call her for a date than men who met the same woman on a low, stable bridge — their fear-arousal got misread by the brain as attraction to her. Later replications are mixed on the exact mechanism, so treat this as a real but moderate effect, not a guaranteed hack.",
+    points: [
+      "Favor activity dates with some mild physiological arousal — a climbing gym, a fast-paced trivia night, a scary movie — over a static, face-to-face dinner, especially for a first date.",
+      "Shared activity also removes interview pressure: there's something to do besides being evaluated across a table.",
+      "Coffee is a fine low-stakes first filter, but consider an activity upgrade for date two if you want real chemistry to build.",
+    ],
+    fail: "Overthinking into an elaborate, expensive date that raises pressure. Simple and engaging beats impressive and stiff.",
+    metric: "You have 2–3 go-to activity date ideas ready so you're never defaulting to dinner out of lack of imagination.",
+  },
+  {
+    n: "4", title: "Sustaining Attraction Long-Term", tag: "Don't drop what got you here",
+    principle: "Long-term satisfaction research weights trustworthiness, warmth, and communication far above what mattered for the initial spark — but you don't get to drop the self-possession that created the spark in the first place.",
+    points: [
+      "Keep an independent life — friendships, goals, interests outside the relationship keep you a person worth being attracted to, not an extension of her.",
+      "Conflict skill specifically: stay regulated, don't stonewall or escalate. One of the best predictors of relationship longevity in the broader literature.",
+      "Maintain some unpredictability — spontaneity and your own opinions keep the \"respected, not just comfortable\" dynamic alive.",
+      "Fitness and ambition don't get to plateau just because you're \"locked in\" — complacency here is one of the most common, most avoidable causes of fading attraction.",
+    ],
+    fail: "Relationship autopilot — assuming secured attraction is now permanent and stops requiring maintenance.",
+    metric: "You still have plans, goals, and a life that don't route through her approval.",
+  },
+  {
+    n: "4.5", title: "Attachment Style & Relationship Security", tag: "New",
+    principle: "A meta-analysis spanning 73 studies and over 21,000 participants found both attachment anxiety and attachment avoidance significantly and negatively predict relationship quality — secure attachment consistently predicts the highest satisfaction.",
+    points: [
+      "Anxious pattern: fear of abandonment, need for reassurance, can escalate conflict.",
+      "Avoidant pattern: discomfort with closeness, withdrawal as things deepen — the more commonly discussed pattern in men, and the one most damaging to a partner's felt connection.",
+      "Attachment style isn't fixed — it's a learned pattern that shifts toward security through consistent, corrective relational experience, including just practicing it deliberately.",
+      "Concrete secure behavior: stay emotionally present during conflict instead of stonewalling; state needs directly instead of testing; tolerate her independent time without anxiety.",
+    ],
+    fail: "Treating \"that's just my attachment style\" as a fixed excuse instead of a pattern to actively work on.",
+    metric: "After a disagreement, you can name which pattern (withdrawal or escalation) you leaned toward — and what you'd do differently.",
+  },
+];
+
+function DialogueBlock({ dialogue }) {
+  return (
+    <div style={{ margin: "14px 0" }}>
+      <div style={{ fontSize: 10.5, color: C.teal, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Example interaction</div>
+      <div style={{ background: C.inkSofter, borderRadius: 8, padding: "14px 14px" }}>
+        {dialogue.map((d, i) => (
+          <div key={i} style={{ marginBottom: 10 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+              <span style={{ fontFamily: mono, fontSize: 10.5, color: d.speaker === "You" ? C.gold : C.rust, minWidth: 34 }}>{d.speaker}</span>
+              <span style={{ color: C.paper, fontSize: 13.5, lineHeight: 1.5 }}>{d.line}</span>
+            </div>
+            {d.note && <div style={{ color: C.paperDim, fontSize: 11.5, marginLeft: 42, marginTop: 2, fontStyle: "italic" }}>{d.note}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DoDont({ doDont }) {
+  return (
+    <div style={{ margin: "14px 0", display: "flex", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ flex: "1 1 200px", background: C.inkSofter, borderRadius: 8, padding: "12px 14px", borderTop: `2px solid ${C.gold}` }}>
+        <div style={{ fontSize: 10.5, color: C.gold, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>Say this</div>
+        <ul style={{ paddingLeft: 16, margin: 0 }}>
+          {doDont.do.map((d, i) => <li key={i} style={{ color: C.paper, fontSize: 12.5, lineHeight: 1.5, marginBottom: 5 }}>{d}</li>)}
+        </ul>
+      </div>
+      <div style={{ flex: "1 1 200px", background: C.inkSofter, borderRadius: 8, padding: "12px 14px", borderTop: `2px solid ${C.rust}` }}>
+        <div style={{ fontSize: 10.5, color: C.rust, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>Not this</div>
+        <ul style={{ paddingLeft: 16, margin: 0 }}>
+          {doDont.dont.map((d, i) => <li key={i} style={{ color: C.paperDim, fontSize: 12.5, lineHeight: 1.5, marginBottom: 5 }}>{d}</li>)}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function Signals({ signals }) {
+  return (
+    <div style={{ margin: "14px 0", display: "flex", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ flex: "1 1 200px", background: C.inkSofter, borderRadius: 8, padding: "12px 14px", borderTop: `2px solid ${C.teal}` }}>
+        <div style={{ fontSize: 10.5, color: C.teal, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>Interest signals</div>
+        <ul style={{ paddingLeft: 16, margin: 0 }}>
+          {signals.interest.map((d, i) => <li key={i} style={{ color: C.paper, fontSize: 12.5, lineHeight: 1.5, marginBottom: 5 }}>{d}</li>)}
+        </ul>
+      </div>
+      <div style={{ flex: "1 1 200px", background: C.inkSofter, borderRadius: 8, padding: "12px 14px", borderTop: `2px solid ${C.paperDim}` }}>
+        <div style={{ fontSize: 10.5, color: C.paperDim, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>Disinterest signals</div>
+        <ul style={{ paddingLeft: 16, margin: 0 }}>
+          {signals.disinterest.map((d, i) => <li key={i} style={{ color: C.paperDim, fontSize: 12.5, lineHeight: 1.5, marginBottom: 5 }}>{d}</li>)}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function ClosingScripts({ closing }) {
+  return (
+    <div style={{ margin: "14px 0" }}>
+      <div style={{ fontSize: 10.5, color: C.gold, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>{closing.title}</div>
+      {closing.scripts.map((s, i) => (
+        <div key={i} style={{ background: C.inkSofter, borderRadius: 8, padding: "10px 14px", marginBottom: 8 }}>
+          <div style={{ fontSize: 11, color: C.teal, marginBottom: 3 }}>{s.label}</div>
+          <div style={{ color: C.paper, fontSize: 13.5, fontStyle: "italic" }}>"{s.line}"</div>
+        </div>
+      ))}
+      {closing.note && <p style={{ color: C.paperDim, fontSize: 12.5, lineHeight: 1.6, marginTop: 8 }}>{closing.note}</p>}
+    </div>
+  );
+}
+
+function ContrastBlock({ contrast }) {
+  return (
+    <div style={{ margin: "14px 0" }}>
+      <div style={{ fontSize: 10.5, color: C.teal, letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>{contrast.situation}</div>
+      <div style={{ background: C.inkSofter, borderRadius: 8, padding: "12px 14px", marginBottom: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+          <span style={{ fontFamily: mono, fontSize: 10.5, color: C.rust, minWidth: 40 }}>Her</span>
+          <span style={{ color: C.paper, fontSize: 13.5, lineHeight: 1.5, fontStyle: "italic" }}>"{contrast.her}"</span>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 200px", background: C.inkSofter, borderRadius: 8, padding: "12px 14px", borderTop: `2px solid ${C.paperDim}` }}>
+          <div style={{ fontSize: 10.5, color: C.paperDim, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>Cold response</div>
+          <div style={{ color: C.paperDim, fontSize: 13, lineHeight: 1.5, fontStyle: "italic" }}>"{contrast.cold}"</div>
+        </div>
+        <div style={{ flex: "1 1 200px", background: C.inkSofter, borderRadius: 8, padding: "12px 14px", borderTop: `2px solid ${C.gold}` }}>
+          <div style={{ fontSize: 10.5, color: C.gold, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>Warm response</div>
+          <div style={{ color: C.paper, fontSize: 13, lineHeight: 1.5, fontStyle: "italic" }}>"{contrast.warm}"</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RankedList({ items }) {
+  const rankColor = (r) => (r <= 2 ? C.gold : r <= 4 ? C.teal : C.rust);
+  return (
+    <div style={{ margin: "14px 0" }}>
+      {items.map((it) => (
+        <div key={it.rank} style={{ display: "flex", gap: 12, marginBottom: 14, background: C.inkSofter, borderRadius: 8, padding: "12px 14px" }}>
+          <div style={{
+            width: 26, height: 26, borderRadius: "50%", background: rankColor(it.rank), color: C.ink,
+            display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontFamily: mono, flexShrink: 0, fontWeight: 700,
+          }}>{it.rank}</div>
+          <div>
+            <div style={{ color: C.paper, fontSize: 14, fontFamily: serif, marginBottom: 4 }}>{it.label}</div>
+            <div style={{ color: C.paperDim, fontSize: 12.5, lineHeight: 1.55 }}>{it.body}</div>
+            {it.example && <div style={{ color: C.teal, fontSize: 12, marginTop: 6, fontStyle: "italic" }}>e.g. {it.example}</div>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CommentTopics({ topics }) {
+  return (
+    <div style={{ margin: "14px 0", display: "flex", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ flex: "1 1 200px", background: C.inkSofter, borderRadius: 8, padding: "12px 14px", borderTop: `2px solid ${C.gold}` }}>
+        <div style={{ fontSize: 10.5, color: C.gold, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>Comment on</div>
+        <ul style={{ paddingLeft: 16, margin: 0 }}>
+          {topics.do.map((d, i) => <li key={i} style={{ color: C.paper, fontSize: 12.5, lineHeight: 1.5, marginBottom: 5 }}>{d}</li>)}
+        </ul>
+      </div>
+      <div style={{ flex: "1 1 200px", background: C.inkSofter, borderRadius: 8, padding: "12px 14px", borderTop: `2px solid ${C.rust}` }}>
+        <div style={{ fontSize: 10.5, color: C.rust, letterSpacing: 1, textTransform: "uppercase", marginBottom: 6 }}>Never comment on</div>
+        <ul style={{ paddingLeft: 16, margin: 0 }}>
+          {topics.dont.map((d, i) => <li key={i} style={{ color: C.paperDim, fontSize: 12.5, lineHeight: 1.5, marginBottom: 5 }}>{d}</li>)}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function AccordionItem({ phase, open, onToggle }) {
+  return (
+    <div style={{ border: `1px solid ${C.line}`, borderRadius: 10, marginBottom: 12, overflow: "hidden", background: C.inkSoft }}>
+      <button onClick={onToggle} style={{
+        width: "100%", textAlign: "left", background: "none", border: "none", cursor: "pointer",
+        padding: "16px 18px", display: "flex", alignItems: "center", gap: 14,
+      }}>
+        <div style={{ fontFamily: mono, fontSize: 13, color: C.gold, minWidth: 34 }}>{phase.n}</div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: serif, fontSize: 17, color: C.paper }}>{phase.title}</div>
+          <div style={{ fontSize: 11, color: C.teal, marginTop: 2 }}>{phase.tag}</div>
+        </div>
+        <div style={{ color: C.paperDim, fontSize: 18, transform: open ? "rotate(45deg)" : "none", transition: "transform 0.2s" }}>+</div>
+      </button>
+      {open && (
+        <div style={{ padding: "0 18px 20px 18px" }}>
+          <p style={{ color: C.paperDim, fontSize: 13.5, lineHeight: 1.6, marginTop: 0 }}>{phase.principle}</p>
+          <ul style={{ paddingLeft: 18, margin: "10px 0" }}>
+            {phase.points.map((p, i) => (
+              <li key={i} style={{ color: C.paper, fontSize: 13.5, lineHeight: 1.6, marginBottom: 6 }}>{p}</li>
+            ))}
+          </ul>
+          {phase.dialogue && <DialogueBlock dialogue={phase.dialogue} />}
+          {phase.contrast && <ContrastBlock contrast={phase.contrast} />}
+          {phase.doDont && <DoDont doDont={phase.doDont} />}
+          {phase.topics && <CommentTopics topics={phase.topics} />}
+          {phase.ranked && <RankedList items={phase.ranked} />}
+          {phase.signals && <Signals signals={phase.signals} />}
+          {phase.closing && <ClosingScripts closing={phase.closing} />}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+            <div style={{ background: C.inkSofter, borderRadius: 6, padding: "10px 12px", borderLeft: `3px solid ${C.rust}` }}>
+              <span style={{ fontSize: 10.5, color: C.rust, letterSpacing: 1, textTransform: "uppercase" }}>Common failure</span>
+              <div style={{ color: C.paperDim, fontSize: 13, marginTop: 3 }}>{phase.fail}</div>
+            </div>
+            <div style={{ background: C.inkSofter, borderRadius: 6, padding: "10px 12px", borderLeft: `3px solid ${C.gold}` }}>
+              <span style={{ fontSize: 10.5, color: C.gold, letterSpacing: 1, textTransform: "uppercase" }}>Progress metric</span>
+              <div style={{ color: C.paperDim, fontSize: 13, marginTop: 3 }}>{phase.metric}</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProgramPage({ onBack }) {
+  const [openIdx, setOpenIdx] = useState(0);
+  return (
+    <div style={{ maxWidth: 720, margin: "0 auto", padding: "32px 16px" }}>
+      <button onClick={onBack} style={{ background: "none", border: `1px solid ${C.line}`, color: C.paperDim, fontSize: 12, padding: "6px 12px", borderRadius: 6, cursor: "pointer", marginBottom: 20 }}>
+        ← Back to estimator
+      </button>
+      <div style={{ fontSize: 11, letterSpacing: 2, color: C.teal, textTransform: "uppercase", marginBottom: 6 }}>The Program</div>
+      <h1 style={{ fontFamily: serif, color: C.paper, fontSize: 26, margin: "0 0 12px", lineHeight: 1.2 }}>
+        From Cold Approach to Long-Term Partner
+      </h1>
+      <p style={{ color: C.paperDim, fontSize: 13.5, lineHeight: 1.6, marginBottom: 24 }}>
+        Ten phases, sequenced from private foundation to sustained long-term attraction. Each is built on the mate-preference and
+        relationship-science research covered on the estimator page — not folklore.
+      </p>
+
+      <div style={{ background: C.inkSofter, border: `1px solid ${C.rust}`, borderRadius: 10, padding: 18, marginBottom: 28 }}>
+        <div style={{ fontFamily: serif, fontSize: 15, color: C.paper, marginBottom: 8 }}>Before anything else</div>
+        <ul style={{ paddingLeft: 18, margin: 0 }}>
+          {NON_NEGOTIABLES.map((n, i) => (
+            <li key={i} style={{ color: C.paperDim, fontSize: 13, lineHeight: 1.6, marginBottom: 6 }}>{n}</li>
+          ))}
+        </ul>
+      </div>
+
+      {PHASES.map((p, i) => (
+        <AccordionItem key={p.n} phase={p} open={openIdx === i} onToggle={() => setOpenIdx(openIdx === i ? -1 : i)} />
+      ))}
+
+      <p style={{ color: C.paperDim, fontSize: 11, marginTop: 24, textAlign: "center", lineHeight: 1.6 }}>
+        Built on Buss (1989), Eastwick &amp; Finkel on stated-vs-revealed preference, Li et al. (2020) on trainable confidence,
+        Fiske et al. on the warmth/competence dimensions of first impressions, Martin et al. (2003) on the four humor styles
+        and Greengross &amp; Miller (2008) on self-deprecating humor and status, Moore (1985) on women's nonverbal courtship
+        signaling, Dutton &amp; Aron on misattributed arousal, Li &amp; Chan (2012) on attachment and relationship quality, and
+        Hinge/OkCupid/Photofeeler photo research — evidence quality varies by claim and is graded within each section.
+      </p>
+    </div>
+  );
+}
+
+function Site() {
+  const [view, setView] = useState("landing");
+
+  if (view === "program") {
+    return (
+      <div style={{ minHeight: "100vh", background: C.ink, fontFamily: "system-ui, -apple-system, sans-serif" }}>
+        <ProgramPage onBack={() => setView("landing")} />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.ink, padding: "32px 16px", fontFamily: "system-ui, -apple-system, sans-serif" }}>
+      <div style={{ maxWidth: 720, margin: "0 auto" }}>
+        <div style={{ borderBottom: `1px solid ${C.line}`, paddingBottom: 16, marginBottom: 24 }}>
+          <div style={{ fontSize: 11, letterSpacing: 2, color: C.teal, textTransform: "uppercase", marginBottom: 6 }}>
+            Field Estimate · Not a Measure of Worth
+          </div>
+          <h1 style={{ fontFamily: serif, color: C.paper, fontSize: 27, margin: 0, lineHeight: 1.15 }}>
+            Attraction Profile Estimator
+          </h1>
+          <p style={{ color: C.paperDim, fontSize: 13.5, marginTop: 10, lineHeight: 1.5 }}>
+            Weighted from population-level mate-preference research. The same literature found that stated preferences barely
+            predict who someone is actually drawn to in person — treat the score as a map of where effort compounds, not a verdict.
+          </p>
+        </div>
+
+        <Calculator />
+
+        <div style={{ marginTop: 32, textAlign: "center", padding: "28px 20px", background: C.inkSoft, border: `1px solid ${C.rust}`, borderRadius: 12 }}>
+          <div style={{ fontFamily: serif, fontSize: 19, color: C.paper, marginBottom: 8 }}>See where the biggest gaps are?</div>
+          <p style={{ color: C.paperDim, fontSize: 13, marginBottom: 16, lineHeight: 1.5 }}>
+            The training program below is sequenced specifically around closing them — from calibrated confidence and body
+            language through cold approach, digital presence, first dates, and long-term relationship security.
+          </p>
+          <button onClick={() => setView("program")} style={{
+            background: C.rust, color: C.paper, border: "none", padding: "12px 28px", borderRadius: 8,
+            fontSize: 14, fontFamily: serif, cursor: "pointer", letterSpacing: 0.5,
+          }}>
+            Start the Training Program →
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<Site />);
+</script>
+</body>
+</html>
